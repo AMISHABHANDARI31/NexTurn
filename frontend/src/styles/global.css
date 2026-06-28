@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { font-family: 'DM Sans', sans-serif; color: #102a43; background: #f7f5ef; font-synthesis: none; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+h1, h2, h3, .display { font-family: 'Manrope', sans-serif; letter-spacing: -.03em; }
+button, a, input, select, textarea { outline-offset: 3px; }
+:focus-visible { outline: 3px solid #2aa6a4; }
+::selection { background: #bfe8df; }
+@layer components {
+  .card { @apply rounded-2xl border border-slate-200/80 bg-white shadow-card; }
+  .eyebrow { @apply text-xs font-bold uppercase tracking-[.16em] text-ocean; }
+  .page-title { @apply text-3xl font-bold text-ink md:text-4xl; }
+  .field-label { @apply mb-1.5 block text-sm font-semibold text-ink; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

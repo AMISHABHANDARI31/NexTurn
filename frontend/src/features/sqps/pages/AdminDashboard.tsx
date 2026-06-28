@@ -1,0 +1,73 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { format } from 'date-fns'
+import { Activity, BarChart3, BrainCircuit, Building2, LockKeyhole, Upload, Users } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { InitialLoadingSkeleton } from '../../../components/feedback/InitialLoadingSkeleton'
+import { NetworkErrorFallback } from '../../../components/feedback/NetworkErrorFallback'
+import { Button } from '../../../components/ui/Button'
+import { Input } from '../../../components/ui/Input'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
+import { adminApi, type AssignableLocation, type ManagedUser } from '../api/adminApi'
+import { MetricCard } from '../components/MetricCard'
+import { PageHeader } from '../components/PageHeader'
+import { PredictionEngineControls } from '../../admin/pages/AnalyticsInsights'
+
+type Tab = 'overview' | 'locations' | 'users' | 'model' | 'analytics'
+const tabs: Array<{ id: Tab; label: string; icon: typeof Activity; path: string }> = [
+  { id: 'overview', label: 'Global overview', icon: Activity, path: '/app/admin/dashboard' }, { id: 'locations', label: 'New center', icon: Building2, path: '/app/admin/locations' }, { id: 'users', label: 'User access', icon: Users, path: '/app/admin/users' }, { id: 'model', label: 'AI model', icon: BrainCircuit, path: '/app/admin/model' }, { id: 'analytics', label: 'Analytics', icon: BarChart3, path: '/app/admin/analytics' },
+]
+
+export function AdminDashboard() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const tab = tabs.find((item) => item.path === location.pathname)?.id ?? 'overview'
+  return <><PageHeader eyebrow="System administration" title="NexTurn control center" description="Global infrastructure, access, prediction operations, and analytics for authorized System Administrators." />
+    <nav className="mb-6 flex gap-2 overflow-x-auto pb-2" aria-label="System Admin features">{tabs.map(({ id, label, icon: Icon, path }) => <button key={id} onClick={() => navigate(path)} aria-pressed={tab === id} className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-4 text-sm font-bold ${tab === id ? 'bg-navy text-white' : 'border border-slate-200 bg-white text-slate-600 hover:text-ink'}`}><Icon size={17} />{label}</button>)}</nav>
+    {tab === 'overview' && <TelemetryPanel />}{tab === 'locations' && <LocationOnboarding />}{tab === 'users' && <UserManagement />}{tab === 'model' && <PredictionEngineControls />}{tab === 'analytics' && <AnalyticsInsights />}
+  </>
+}
+
+function TelemetryPanel() {
+  const query = useQuery({ queryKey: ['admin-telemetry'], queryFn: adminApi.getTelemetry, refetchInterval: 30_000 })
+  if (query.isLoading) return <InitialLoadingSkeleton />
+  if (query.isError) return <NetworkErrorFallback onRetry={() => query.refetch()} />
+  return <section aria-labelledby="telemetry-title"><div className="mb-4"><h2 id="telemetry-title" className="text-xl font-bold">Global Telemetry Panel</h2><p className="text-sm text-slate-500">Live MongoDB totals refresh every 30 seconds.</p></div><div className="grid gap-4 md:grid-cols-3"><MetricCard label="Registered users" value={String(query.data?.totalUsers ?? 0)} detail="All platform profiles" accent /><MetricCard label="Service locations" value={String(query.data?.totalLocations ?? 0)} detail="Distinct physical centers" /><MetricCard label="Tokens issued today" value={String(query.data?.tokensIssuedToday ?? 0)} detail="Since local midnight" /></div></section>
+}
+
+function UserManagement() {
+  const client = useQueryClient()
+  const query = useQuery({ queryKey: ['admin-users'], queryFn: adminApi.getUsers })
+  const locationsQuery = useQuery({ queryKey: ['admin-assignable-locations'], queryFn: adminApi.getAssignableLocations })
+  const mutation = useMutation({ mutationFn: ({ id, role, assignedLocationId }: { id: string; role: 'User' | 'Manager'; assignedLocationId?: string }) => adminApi.updateRole(id, role, assignedLocationId), onSuccess: (updated) => client.setQueryData<ManagedUser[]>(['admin-users'], (users = []) => users.map((user) => user.id === updated.id ? updated : user)) })
+  if (query.isLoading || locationsQuery.isLoading) return <InitialLoadingSkeleton />
+  if (query.isError || locationsQuery.isError) return <NetworkErrorFallback onRetry={() => { query.refetch(); locationsQuery.refetch() }} />
+  return <section className="card overflow-hidden" aria-labelledby="users-title"><div className="border-b border-slate-100 p-5"><h2 id="users-title" className="text-xl font-bold">User Management Desk</h2><p className="text-sm text-slate-500">Promote Users to Managers and assign exactly one operating branch. SystemAdmin is immutable.</p></div>{mutation.isError && <ErrorAlert error={mutation.error} />}<div className="overflow-x-auto"><table className="w-full min-w-[920px] text-left"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-4">Profile</th><th className="p-4">Verified</th><th className="p-4">Created</th><th className="p-4">Access role & branch</th></tr></thead><tbody className="divide-y divide-slate-100">{query.data?.map((user) => <tr key={user.id}><td className="p-4"><div className="flex items-center gap-2"><strong>{user.name}</strong>{user.isBootstrapAdmin && <LockKeyhole size={14} className="text-ocean" />}</div><p className="text-sm text-slate-500">{user.email}</p></td><td className="p-4"><StatusBadge tone={user.isEmailVerified ? 'success' : 'warning'}>{user.isEmailVerified ? 'Verified' : 'Pending'}</StatusBadge></td><td className="p-4 text-sm text-slate-500">{format(new Date(user.createdAt), 'MMM d, yyyy')}</td><td className="p-4">{user.role === 'SystemAdmin' ? <StatusBadge tone="success">SystemAdmin</StatusBadge> : <RoleAssignment user={user} locations={locationsQuery.data ?? []} pending={mutation.isPending && mutation.variables?.id === user.id} onChange={(role, assignedLocationId) => mutation.mutate({ id: user.id, role, assignedLocationId })} />}</td></tr>)}</tbody></table></div></section>
+}
+
+function RoleAssignment({ user, locations, pending, onChange }: { user: ManagedUser; locations: AssignableLocation[]; pending: boolean; onChange: (role: 'User' | 'Manager', assignedLocationId?: string) => void }) {
+  const [branchId, setBranchId] = useState(user.assignedLocationId ?? '')
+  return <div className="flex min-w-[330px] gap-2"><select aria-label={`Branch for ${user.name}`} value={branchId} disabled={pending} onChange={(event) => { const next = event.target.value; setBranchId(next); if (user.role === 'Manager' && next) onChange('Manager', next) }} className="min-h-10 min-w-48 rounded-lg border border-slate-300 bg-white px-3 text-sm"><option value="">Select branch</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select><select aria-label={`Role for ${user.name}`} value={user.role} disabled={pending} onChange={(event) => onChange(event.target.value as 'User' | 'Manager', branchId || undefined)} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold"><option value="User">User</option><option value="Manager" disabled={!branchId}>Manager</option></select></div>
+}
+
+function LocationOnboarding() {
+  const [message, setMessage] = useState('')
+  const mutation = useMutation({ mutationFn: adminApi.createLocation, onSuccess: () => setMessage('The new service center is live.') })
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); setMessage(''); const form = event.currentTarget; const data = new FormData(form); mutation.mutate(data, { onSuccess: () => form.reset() }) }
+  return <section className="card p-6" aria-labelledby="location-title"><h2 id="location-title" className="text-xl font-bold">Onboard New Center</h2><p className="mt-1 text-sm text-slate-500">Create a physical location and stream its image or floorplan to Cloudinary.</p><form onSubmit={submit} className="mt-6 grid gap-5 md:grid-cols-2"><Input required name="name" label="Location name" placeholder="Central Aadhaar Office" /><label className="text-sm font-bold">Category<select required name="category" className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 font-normal"><option value="">Select category</option><option>Healthcare</option><option>Banking</option><option>Education & College</option><option>Government & Identity</option></select></label><Input required name="activeCounters" label="Active counters" type="number" min={1} max={100} defaultValue={1} /><Input name="service" label="Primary service" placeholder="General services" /><label className="md:col-span-2 text-sm font-bold">Center image or floorplan<input required name="image" type="file" accept="image/png,image/jpeg,image/webp" className="mt-2 block w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-navy file:px-4 file:py-2 file:font-bold file:text-white" /></label>{mutation.isError && <div className="md:col-span-2"><ErrorAlert error={mutation.error} /></div>}{message && <p role="status" className="md:col-span-2 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}<Button className="md:col-span-2" icon={<Upload size={17} />} disabled={mutation.isPending}>{mutation.isPending ? 'Uploading center…' : 'Create service center'}</Button></form></section>
+}
+
+const days = ['', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+function AnalyticsInsights() {
+  const query = useQuery({ queryKey: ['admin-analytics'], queryFn: adminApi.getAnalytics })
+  if (query.isLoading) return <InitialLoadingSkeleton />
+  if (query.isError) return <NetworkErrorFallback onRetry={() => query.refetch()} />
+  const peak = query.data?.peakRushHours.map((item) => ({ ...item, label: `${String(item.hour).padStart(2, '0')}:00` })) ?? []
+  const weekly = query.data?.weeklyTraffic.map((item) => ({ ...item, day: days[item.dayOfWeek] })) ?? []
+  return <section aria-labelledby="analytics-title"><div className="mb-4"><h2 id="analytics-title" className="text-xl font-bold">Analytics Insights</h2><p className="text-sm text-slate-500">MongoDB aggregation pipelines over historical queue tokens.</p></div><div className="grid gap-6 xl:grid-cols-2"><ChartCard title="Peak rush hours">{peak.length ? <ResponsiveContainer width="100%" height={300}><BarChart data={peak}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="tokens" name="Tokens" fill="#176b87" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer> : <EmptyChart />}</ChartCard><ChartCard title="Weekly traffic">{weekly.length ? <ResponsiveContainer width="100%" height={300}><LineChart data={weekly}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="day" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Line type="monotone" dataKey="tokens" name="Tokens" stroke="#2aa6a4" strokeWidth={3} /></LineChart></ResponsiveContainer> : <EmptyChart />}</ChartCard></div><section className="card mt-6 overflow-hidden"><div className="border-b border-slate-100 p-5"><h3 className="font-bold">Sector efficiency</h3></div><div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-4">Sector</th><th className="p-4">Tokens</th><th className="p-4">Average processing</th></tr></thead><tbody>{query.data?.sectorEfficiency.map((row) => <tr key={row.category} className="border-t border-slate-100"><td className="p-4 font-bold">{row.category}</td><td className="p-4">{row.tokens}</td><td className="p-4">{row.averageProcessingMinutes} min</td></tr>)}</tbody></table></div></section></section>
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) { return <section className="card p-5"><h3 className="mb-5 font-bold">{title}</h3>{children}</section> }
+function EmptyChart() { return <div className="grid h-[300px] place-items-center rounded-xl bg-slate-50 text-sm text-slate-500">Analytics appear after tokens are issued.</div> }
+function ErrorAlert({ error }: { error: unknown }) { const message = typeof error === 'object' && error && 'message' in error && typeof error.message === 'string' ? error.message : 'The operation failed.'; return <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{message}</p> }
