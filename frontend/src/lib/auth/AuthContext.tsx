@@ -3,12 +3,15 @@ import { auth, type Session } from './auth'
 import { authApi, type RegistrationPending } from '../../features/sqps/api/authApi'
 
 interface RegisterInput { name: string; email: string; password: string }
+interface ResetPasswordInput { email: string; token: string; password: string }
 interface AuthValue {
   session: Session | null
   signIn: (email: string, password: string) => Promise<Session>
   registerAccount: (input: RegisterInput) => Promise<RegistrationPending>
   verifyEmailOtp: (email: string, otp: string) => Promise<Session>
   resendEmailOtp: (email: string) => Promise<RegistrationPending>
+  requestPasswordReset: (email: string) => Promise<string>
+  resetPassword: (input: ResetPasswordInput) => Promise<string>
   signOut: () => void
 }
 
@@ -35,6 +38,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return result.user
     },
     resendEmailOtp: (email) => authApi.resendOtp(email),
+    requestPasswordReset: (email) => authApi.requestPasswordReset(email),
+    resetPassword: (input) => authApi.resetPassword(input),
     signOut: () => {
       auth.clearSession()
       setSession(null)

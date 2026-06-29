@@ -11,7 +11,9 @@ export async function verifyBranchAccess(req, res, next) {
     const assignedId = String(req.user.assignedLocationId)
     const assignedBranch = await Location.findById(assignedId).lean()
     if (!assignedBranch) return res.status(403).json({ success: false, error: { code: 'BRANCH_NOT_FOUND', message: 'The assigned branch no longer exists.' } })
-    const branchLocationIds = await Location.find({ location: assignedBranch.location }).distinct('_id')
+    if (assignedBranch.branchStatus === 'INACTIVE') return res.status(403).json({ success: false, error: { code: 'BRANCH_INACTIVE', message: 'Your assigned branch is currently inactive.' } })
+    const branchFilter = assignedBranch.branchCode ? { $or: [{ branchCode: assignedBranch.branchCode }, { location: assignedBranch.location }] } : { location: assignedBranch.location }
+    const branchLocationIds = await Location.find(branchFilter).distinct('_id')
     const allowedLocationIds = new Set(branchLocationIds.map(String))
     if (req.params.locationId && String(req.params.locationId) !== assignedId) return res.status(403).json({ success: false, error: { code: 'CROSS_BRANCH_FORBIDDEN', message: 'You cannot access another branch.' } })
 

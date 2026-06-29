@@ -39,6 +39,16 @@ export const authApi = {
     return data.data
   },
 
+  async requestPasswordReset(email: string) {
+    const { data } = await apiClient.post<ApiEnvelope<null>>('/auth/forgot-password', { email })
+    return data.message
+  },
+
+  async resetPassword(input: { email: string; token: string; password: string }) {
+    const { data } = await apiClient.post<ApiEnvelope<null>>('/auth/reset-password', input)
+    return data.message
+  },
+
   async getCurrentUser() {
     const { data } = await apiClient.get<ApiEnvelope<{ user: Session }>>('/auth/me')
     return data.data.user

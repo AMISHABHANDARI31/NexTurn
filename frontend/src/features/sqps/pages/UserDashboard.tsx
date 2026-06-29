@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
   Activity,
@@ -42,6 +42,15 @@ interface ActiveToken {
   peopleAhead: number;
   issuedAt: string;
 }
+interface RealtimeQueueSnapshot {
+  queueId: string;
+  peopleAhead?: number;
+  waitingCount: number;
+  estimatedWaitTime?: number;
+  activeCounters?: number;
+  queueProgress?: number;
+  currentToken?: { code: string; status: string } | null;
+}
 const TOKEN_KEY = "nexturn.active-token";
 function readToken(): ActiveToken | null {
   try {
@@ -55,8 +64,23 @@ export function UserDashboard() {
   const location = useLocation();
   const navigate = useNavigate();
   const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [activeToken, setActiveToken] = useState<ActiveToken | null>(readToken);
   const prediction = usePrediction(activeToken?.locationId, undefined, activeToken?.tokenId);
+  const realtimeQueue = useQuery<RealtimeQueueSnapshot | null>({
+    queryKey: ["realtime-queue", activeToken?.locationId],
+    queryFn: async () => null,
+    enabled: false,
+  });
+  const livePrediction = prediction.data
+    ? {
+        ...prediction.data,
+        estimatedWaitMinutes:
+          realtimeQueue.data?.estimatedWaitTime ?? prediction.data.estimatedWaitMinutes,
+        peopleAhead: realtimeQueue.data?.peopleAhead ?? prediction.data.peopleAhead,
+        activeCounters: realtimeQueue.data?.activeCounters ?? prediction.data.activeCounters,
+      }
+    : undefined;
   const [selectedService, setSelectedService] = useState(
     () => (location.state as { service?: string } | null)?.service ?? "",
   );
@@ -68,6 +92,33 @@ export function UserDashboard() {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [showCancellationReason, setShowCancellationReason] = useState(false);
   const [cancellationReason, setCancellationReason] = useState("");
+  const cancellationMutation = useMutation({
+    mutationFn: ({ tokenId, reason }: { tokenId: string; reason: string }) => queueApi.cancelToken(tokenId, reason),
+    onSuccess: () => {
+      localStorage.setItem(
+        "nexturn.last-cancellation",
+        JSON.stringify({
+          token: activeToken?.code,
+          reason: cancellationReason,
+          cancelledAt: new Date().toISOString(),
+        }),
+      );
+      saveToken(null);
+      setConfirmCancel(false);
+      setShowCancellationReason(false);
+      setCancellationReason("");
+      queryClient.invalidateQueries({ queryKey: ["tokens"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["prediction-core"] });
+      navigate("/app/dashboard");
+    },
+  });
+
+  useEffect(() => {
+    const syncActiveToken = () => setActiveToken(readToken());
+    window.addEventListener("nexturn-active-token-changed", syncActiveToken);
+    return () => window.removeEventListener("nexturn-active-token-changed", syncActiveToken);
+  }, []);
 
   const selectService = (service: string, serviceLocation: string) => {
     setSelectedService(service);
@@ -78,22 +129,11 @@ export function UserDashboard() {
     setActiveToken(token);
     if (token) localStorage.setItem(TOKEN_KEY, JSON.stringify(token));
     else localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event("nexturn-active-token-changed"));
   };
   const cancelToken = () => {
-    if (!cancellationReason) return;
-    localStorage.setItem(
-      "nexturn.last-cancellation",
-      JSON.stringify({
-        token: activeToken?.code,
-        reason: cancellationReason,
-        cancelledAt: new Date().toISOString(),
-      }),
-    );
-    saveToken(null);
-    setConfirmCancel(false);
-    setShowCancellationReason(false);
-    setCancellationReason("");
-    navigate("/app/dashboard");
+    if (!cancellationReason || !activeToken?.tokenId) return;
+    cancellationMutation.mutate({ tokenId: activeToken.tokenId, reason: cancellationReason });
   };
 
   if (location.pathname === "/app/services")
@@ -114,7 +154,8 @@ export function UserDashboard() {
       <>
         <LiveToken
           token={activeToken}
-          prediction={prediction.data}
+          prediction={livePrediction}
+          realtimeQueue={realtimeQueue.data ?? undefined}
           confirmCancel={confirmCancel}
           setConfirmCancel={setConfirmCancel}
           onCancel={() => setShowCancellationReason(true)}
@@ -129,6 +170,8 @@ export function UserDashboard() {
               setCancellationReason("");
             }}
             onConfirm={cancelToken}
+            isSubmitting={cancellationMutation.isPending}
+            error={cancellationMutation.isError ? getErrorMessage(cancellationMutation.error, "Unable to cancel token. Please try again.") : undefined}
           />
         )}
       </>
@@ -139,7 +182,8 @@ export function UserDashboard() {
     <DashboardOverview
       name={session?.name ?? "User"}
       token={activeToken}
-      prediction={prediction.data}
+      prediction={livePrediction}
+      realtimeQueue={realtimeQueue.data ?? undefined}
       isPredictionSyncing={prediction.isFetching}
       onFindService={() => navigate("/app/services")}
       onViewQueue={() => navigate("/app/queue")}
@@ -233,12 +277,16 @@ function ServiceCatalog({
                 <p className="text-xl font-bold">
                   {item.predictedWaitMinutes} min
                 </p>
+                <p className={`mt-1 text-xs font-semibold ${item.acceptsTokens ? "text-emerald-700" : "text-amber-700"}`}>
+                  {item.tokenAvailabilityReason ?? (item.acceptsTokens ? "Accepting tokens" : "Counter not open")}
+                </p>
               </div>
               <Button
                 onClick={() => onSelect(item.service, item.location)}
+                disabled={!item.acceptsTokens}
                 icon={<ArrowRight size={16} />}
               >
-                Select
+                {item.acceptsTokens ? "Select" : "Closed"}
               </Button>
             </div>
           </article>
@@ -301,7 +349,7 @@ function TokenIssuance({
           </div>
           {mutation.isError && (
             <p role="alert" className="mt-4 text-sm text-red-700">
-              Unable to issue a token. Please try again.
+              {getErrorMessage(mutation.error, "Unable to issue a token. Please try again.")}
             </p>
           )}
         </aside>
@@ -310,9 +358,16 @@ function TokenIssuance({
   );
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return typeof error === "object" && error && "message" in error && typeof error.message === "string"
+    ? error.message
+    : fallback;
+}
+
 function LiveToken({
   token,
   prediction,
+  realtimeQueue,
   confirmCancel,
   setConfirmCancel,
   onCancel,
@@ -320,6 +375,7 @@ function LiveToken({
 }: {
   token: ActiveToken | null;
   prediction?: CorePrediction;
+  realtimeQueue?: RealtimeQueueSnapshot;
   confirmCancel: boolean;
   setConfirmCancel: (value: boolean) => void;
   onCancel: () => void;
@@ -373,12 +429,17 @@ function LiveToken({
             <h2 className="mt-1 text-xl font-bold">
               Current estimate: {prediction?.estimatedWaitMinutes ?? token.estimatedMinutes} minutes
             </h2>
+            {realtimeQueue?.currentToken && (
+              <p className="mt-1 text-sm text-slate-500">
+                Currently serving: <strong>{realtimeQueue.currentToken.code}</strong>
+              </p>
+            )}
           </div>
           <RefreshCw className="text-aqua" />
         </div>
         <div className="relative mt-9 h-20">
           <div className="absolute left-0 right-0 top-7 h-3 rounded-full bg-slate-100" />
-          <div className="absolute left-[24%] right-[18%] top-7 h-3 rounded-full bg-mint" />
+          <div className="absolute left-0 top-7 h-3 rounded-full bg-mint" style={{ width: `${realtimeQueue?.queueProgress ?? 58}%` }} />
           <div className="absolute left-[58%] top-4 h-9 w-1 rounded-full bg-navy" />
           <div className="absolute left-[58%] top-0 -translate-x-1/2 rounded-lg bg-navy px-2 py-1 text-xs font-bold text-white">
             {prediction?.estimatedWaitMinutes ?? token.estimatedMinutes} min
@@ -436,11 +497,15 @@ function CancellationReasonDialog({
   onReasonChange,
   onClose,
   onConfirm,
+  isSubmitting = false,
+  error,
 }: {
   reason: string;
   onReasonChange: (reason: string) => void;
   onClose: () => void;
   onConfirm: () => void;
+  isSubmitting?: boolean;
+  error?: string;
 }) {
   return (
     <div
@@ -479,12 +544,13 @@ function CancellationReasonDialog({
           </option>
           <option value="Other">Other</option>
         </select>
+        {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={isSubmitting}>
             Go back
           </Button>
-          <Button variant="danger" disabled={!reason} onClick={onConfirm}>
-            Cancel token
+          <Button variant="danger" disabled={!reason || isSubmitting} onClick={onConfirm}>
+            {isSubmitting ? "Cancelling..." : "Cancel token"}
           </Button>
         </div>
       </section>
@@ -543,6 +609,7 @@ function DashboardOverview({
   name,
   token,
   prediction,
+  realtimeQueue,
   isPredictionSyncing,
   onFindService,
   onViewQueue,
@@ -550,6 +617,7 @@ function DashboardOverview({
   name: string;
   token: ActiveToken | null;
   prediction?: CorePrediction;
+  realtimeQueue?: RealtimeQueueSnapshot;
   isPredictionSyncing: boolean;
   onFindService: () => void;
   onViewQueue: () => void;
@@ -601,7 +669,7 @@ function DashboardOverview({
         <MetricCard
           label="People ahead"
           value={token ? String(prediction?.peopleAhead ?? token.peopleAhead) : "--"}
-          detail={token ? "Live queue position" : "Select a service to begin"}
+          detail={token ? `Live queue position${realtimeQueue?.currentToken ? ` · serving ${realtimeQueue.currentToken.code}` : ""}` : "Select a service to begin"}
         />
         <MetricCard
           label="Prediction confidence"

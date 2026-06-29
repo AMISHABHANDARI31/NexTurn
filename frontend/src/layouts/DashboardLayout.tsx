@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom'
 import { Breadcrumbs } from '../components/navigation/Breadcrumbs'
 import { Navbar } from '../components/navigation/Navbar'
 import { Sidebar } from '../components/navigation/Sidebar'
+import { RealtimeStatus } from '../components/LiveQueue/RealtimeStatus'
 import { useAuth } from '../lib/auth/AuthContext'
 
 export function DashboardLayout() {
@@ -20,6 +21,7 @@ export function DashboardLayout() {
           <Outlet />
         </main>
       </div>
+      <RealtimeStatus />
     </div>
   )
 }

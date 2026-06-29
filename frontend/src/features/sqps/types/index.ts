@@ -14,7 +14,9 @@ export interface Token {
   service: string;
   waitMinutes: number;
   priority: "standard" | "priority";
-  status: "waiting" | "serving" | "done";
+  status: "waiting" | "serving" | "done" | "cancelled";
+  cancelReason?: string | null;
+  cancelledAt?: string | null;
 }
 export interface Notification {
   id: string;
@@ -32,5 +34,8 @@ export interface ServiceLocation {
   category: string;
   status: "Available" | "Busy" | "Unavailable";
   predictedWaitMinutes: number;
+  activeCounters?: number;
+  acceptsTokens?: boolean;
+  tokenAvailabilityReason?: string;
   imageUrl?: string | null;
 }

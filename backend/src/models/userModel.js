@@ -8,12 +8,17 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['User', 'Manager', 'SystemAdmin'], default: 'User', index: true },
   isBootstrapAdmin: { type: Boolean, default: false, index: true },
   assignedLocationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Location', default: null, index: true },
+  assignedAt: { type: Date, default: null },
+  assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  status: { type: String, enum: ['ACTIVE', 'INACTIVE'], default: 'ACTIVE', index: true },
   isEmailVerified: { type: Boolean, default: false, index: true },
   emailVerifiedAt: { type: Date, default: null },
   emailVerificationOtpHash: { type: String, default: null, select: false },
   emailVerificationOtpExpiresAt: { type: Date, default: null, select: false },
   emailVerificationOtpLastSentAt: { type: Date, default: null, select: false },
   emailVerificationOtpAttempts: { type: Number, default: 0, select: false },
+  passwordResetTokenHash: { type: String, default: null, select: false },
+  passwordResetTokenExpiresAt: { type: Date, default: null, select: false },
 }, { timestamps: true, versionKey: false })
 
 userSchema.pre('save', async function hashPassword() {
