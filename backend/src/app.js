@@ -17,6 +17,7 @@ const app = express()
 
 const allowedOrigins = new Set([
   process.env.FRONTEND_URL,
+  ...(process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
   ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5173', 'http://127.0.0.1:5173']),
 ].filter(Boolean))
 
@@ -29,7 +30,7 @@ app.use(helmet({
       scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", process.env.FRONTEND_URL].filter(Boolean),
+      connectSrc: ["'self'", process.env.FRONTEND_URL, ...(process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean)].filter(Boolean),
       frameAncestors: ["'none'"],
     },
   },
