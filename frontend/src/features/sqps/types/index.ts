@@ -10,6 +10,9 @@ export interface QueueSummary {
 export interface Token {
   id: string;
   code: string;
+  displayTokenNumber?: string;
+  dailySequenceNumber?: number;
+  date?: string;
   customer: string;
   service: string;
   waitMinutes: number;

@@ -4,8 +4,11 @@ import { auth } from '../auth/auth'
 export interface ApiError { message: string; code?: string; requestId?: string; status?: number }
 interface BackendErrorBody { message?: string; requestId?: string; error?: { code?: string; message?: string; requestId?: string; fields?: Record<string, string> } }
 
+const productionApiBaseUrl = 'https://nexturn-8vta.onrender.com/api/v1/sqps'
+const localApiBaseUrl = 'http://localhost:5000/api/v1/sqps'
+
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1/sqps',
+  baseURL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? productionApiBaseUrl : localApiBaseUrl),
   timeout: 12_000,
 })
 

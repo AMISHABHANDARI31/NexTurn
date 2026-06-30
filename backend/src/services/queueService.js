@@ -4,6 +4,7 @@ import Token from '../models/tokenModel.js'
 import { getIO } from '../websocket/socketServer.js'
 import { rooms, SOCKET_EVENTS } from '../websocket/events.js'
 import { predictQueue } from '../../ai/prediction/predictionService.js'
+import { getTokenDisplay } from './tokenNumberService.js'
 
 export async function getQueueSnapshot(locationId, userId = null) {
   const location = await Location.findById(locationId).lean()
@@ -12,7 +13,7 @@ export async function getQueueSnapshot(locationId, userId = null) {
   const [activeCounters, activeTokens] = await Promise.all([
     Counter.countDocuments({ location: locationId, status: 'Active' }),
     Token.find({ location: locationId, status: { $in: ['waiting', 'serving'] } })
-      .select('_id code user service priority status estimatedMinutes createdAt servingAt counter')
+      .select('_id code displayTokenNumber dailySequenceNumber date user service priority status estimatedMinutes createdAt servingAt counter')
       .sort({ priority: -1, createdAt: 1 })
       .lean(),
   ])
@@ -72,7 +73,7 @@ export function emitTokenCancelled({ token }) {
   if (!io || !token?.location) return
   const payload = {
     tokenId: String(token._id),
-    tokenNumber: token.code,
+    tokenNumber: getTokenDisplay(token),
     userId: token.user ? String(token.user) : null,
     cancelledBy: token.cancelledBy,
     reason: token.cancelReason,
@@ -80,7 +81,7 @@ export function emitTokenCancelled({ token }) {
   }
   io.to(rooms.location(token.location)).emit(SOCKET_EVENTS.TOKEN_CANCELLED, payload)
   if (token.user) io.to(rooms.user(token.user)).emit(SOCKET_EVENTS.TOKEN_CANCELLED, payload)
-  console.info(`[queue-event] ${SOCKET_EVENTS.TOKEN_CANCELLED} token=${token.code}`)
+  console.info(`[queue-event] ${SOCKET_EVENTS.TOKEN_CANCELLED} token=${getTokenDisplay(token)}`)
 }
 
 export function emitCounterStatusChanged({ counter, availableServices = [] }) {
@@ -109,7 +110,7 @@ export function emitNextUserCalled({ counterId, token, userId }) {
   }
   io.to(rooms.location(token.location)).emit(SOCKET_EVENTS.NEXT_USER_CALLED, payload)
   if (userId) io.to(rooms.user(userId)).emit(SOCKET_EVENTS.NEXT_USER_CALLED, payload)
-  console.info(`[queue-event] ${SOCKET_EVENTS.NEXT_USER_CALLED} token=${token.code}`)
+  console.info(`[queue-event] ${SOCKET_EVENTS.NEXT_USER_CALLED} token=${getTokenDisplay(token)}`)
 }
 
 export function emitQueueAutoAdvanced({ queueId, previousToken, currentToken, counterId, estimatedWaitTime }) {
@@ -124,7 +125,7 @@ export function emitQueueAutoAdvanced({ queueId, previousToken, currentToken, co
     timestamp: new Date().toISOString(),
   }
   io.to(rooms.location(queueId)).emit(SOCKET_EVENTS.QUEUE_AUTO_ADVANCED, payload)
-  console.info(`[queue-event] ${SOCKET_EVENTS.QUEUE_AUTO_ADVANCED} queue=${queueId} current=${currentToken?.code || 'none'}`)
+  console.info(`[queue-event] ${SOCKET_EVENTS.QUEUE_AUTO_ADVANCED} queue=${queueId} current=${currentToken ? getTokenDisplay(currentToken) : 'none'}`)
 }
 
 export function emitNextUserAutomaticallyCalled({ token, counter }) {
@@ -139,7 +140,7 @@ export function emitNextUserAutomaticallyCalled({ token, counter }) {
   }
   io.to(rooms.location(token.location)).emit(SOCKET_EVENTS.NEXT_USER_AUTOMATICALLY_CALLED, payload)
   if (token.user) io.to(rooms.user(token.user)).emit(SOCKET_EVENTS.NEXT_USER_AUTOMATICALLY_CALLED, payload)
-  console.info(`[queue-event] ${SOCKET_EVENTS.NEXT_USER_AUTOMATICALLY_CALLED} token=${token.code}`)
+  console.info(`[queue-event] ${SOCKET_EVENTS.NEXT_USER_AUTOMATICALLY_CALLED} token=${getTokenDisplay(token)}`)
 }
 
 export function emitPredictionUpdated({ locationId, tokenId, oldWaitTime = null, newWaitTime, confidenceScore }) {
@@ -170,9 +171,13 @@ export function emitManagerLocationUpdated({ managerId, oldLocationId = null, ne
 }
 
 function serializeToken(token) {
+  const displayTokenNumber = getTokenDisplay(token)
   return {
     id: String(token._id),
-    code: token.code,
+    code: displayTokenNumber,
+    displayTokenNumber,
+    dailySequenceNumber: token.dailySequenceNumber,
+    date: token.date,
     userId: token.user ? String(token.user) : null,
     service: token.service,
     priority: token.priority,

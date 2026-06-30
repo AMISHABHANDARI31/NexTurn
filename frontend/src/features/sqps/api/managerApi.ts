@@ -3,8 +3,8 @@ import { apiClient } from '../../../lib/http/apiClient'
 interface Envelope<T> { success: boolean; message?: string; data: T }
 export interface BranchLocation { _id: string; location: string; category: string; activeCounters: number; businessHours: { openTime: string; closeTime: string }; defaultServiceMinutes: number; scheduleImageUrl?: string }
 export interface Counter { _id: string; name: string; number: number; status: 'Active' | 'Break' | 'Closed'; lastStatusChangedAt: string }
-export interface LiveToken { _id: string; code: string; service: string; category: string; priority: 'standard' | 'high'; status: 'waiting' | 'serving'; estimatedMinutes: number; createdAt: string; servingAt?: string; counter?: { name: string; number: number } }
-export interface CancelledToken { _id: string; code: string; service: string; cancelReason?: string | null; cancelledBy?: 'USER' | 'MANAGER' | 'SYSTEM' | null; cancelledAt?: string | null }
+export interface LiveToken { _id: string; code: string; displayTokenNumber?: string; dailySequenceNumber?: number; date?: string; service: string; category: string; priority: 'standard' | 'high'; status: 'waiting' | 'serving'; estimatedMinutes: number; createdAt: string; servingAt?: string; counter?: { name: string; number: number } }
+export interface CancelledToken { _id: string; code: string; displayTokenNumber?: string; dailySequenceNumber?: number; date?: string; service: string; cancelReason?: string | null; cancelledBy?: 'USER' | 'MANAGER' | 'SYSTEM' | null; cancelledAt?: string | null }
 export interface BranchService { locationId: string; service: string; category: string }
 export interface ManagerAnalytics { total: number; completed: number; cancelled: number; cancellationRate: number; cancellationReasons: Array<{ reason: string; count: number }>; counterSpeed: Array<{ counterId: string; counterName: string; completed: number; averageProcessingMinutes: number }>; hourlyVolume: Array<{ hour: number; customers: number }> }
 export interface ManagerAlert { id: string; severity: 'critical' | 'warning'; title: string; message: string }

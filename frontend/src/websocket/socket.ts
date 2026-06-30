@@ -17,9 +17,11 @@ export const SOCKET_EVENTS = {
 } as const
 
 let socket: Socket | null = null
+const productionApiBaseUrl = 'https://nexturn-8vta.onrender.com/api/v1/sqps'
+const localApiBaseUrl = 'http://localhost:5000/api/v1/sqps'
 
 function getSocketUrl() {
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1/sqps'
+  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? productionApiBaseUrl : localApiBaseUrl)
   return apiBase.replace(/\/api\/v1\/sqps\/?$/, '')
 }
 

@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import cloudinary from '../config/cloudinary.js'
 import Counter from '../models/counterModel.js'
 import Location from '../models/locationModel.js'
@@ -7,6 +6,7 @@ import { uploadImageBuffer } from '../utils/cloudinaryUpload.js'
 import { enqueueManagerAlertEmail, enqueueQueueApproachingEmail, enqueueTokenCancelledEmail } from '../services/emailQueue.js'
 import { emitCounterStatusChanged, emitNextUserCalled, emitPredictionUpdated, emitQueueUpdated, emitTokenCancelled, emitUserQueueUpdated } from '../services/queueService.js'
 import { notifyUser } from '../services/notificationService.js'
+import { generateDailyTokenNumber, getTokenDisplay } from '../services/tokenNumberService.js'
 import { getBranchAutomationState, updateBranchAutomationSettings } from '../modules/queue/automationService.js'
 import { calculateServiceWindow, estimateServiceDurationMinutes } from '../modules/queue/predictionService.js'
 import { buildHistoryFromCompletedToken } from '../../ai/training/datasetBuilder.js'
@@ -111,7 +111,11 @@ export async function getLiveQueue(req, res, next) {
       Token.find({ location: { $in: req.branchLocationIds }, status: 'cancelled' }).sort({ cancelledAt: -1 }).limit(10).lean(),
       Location.find({ _id: { $in: req.branchLocationIds } }).select('service category').sort({ service: 1 }).lean(),
     ])
-    res.json({ success: true, data: { tokens, cancelledTokens, services: services.map((item) => ({ locationId: String(item._id), service: item.service, category: item.category })) } })
+    res.json({ success: true, data: {
+      tokens: tokens.map(publicToken),
+      cancelledTokens: cancelledTokens.map(publicToken),
+      services: services.map((item) => ({ locationId: String(item._id), service: item.service, category: item.category })),
+    } })
   } catch (error) { next(error) }
 }
 
@@ -137,13 +141,13 @@ export async function callNextToken(req, res, next) {
     await token.save({ validateBeforeSave: false })
     emitNextUserCalled({ counterId: counter._id, token, userId: token.user })
     if (token.user) {
-      notifyUser(token.user, { title: 'Your turn is approaching', message: `Token ${token.code} is now being served at ${counter.name}.`, type: 'queue', data: { tokenId: token._id, counterId: counter._id } })
+      notifyUser(token.user, { title: 'Your turn is approaching', message: `${getTokenDisplay(token)} is now being served at ${counter.name}.`, type: 'queue', data: { tokenId: token._id, counterId: counter._id } })
       await emitUserQueueUpdated(token.location, token.user)
     }
     await Promise.all(req.branchLocationIds.map((locationId) => emitQueueUpdated(locationId)))
     emitPredictionUpdated({ locationId: token.location, tokenId: token._id, oldWaitTime: token.estimatedMinutes, newWaitTime: 0, confidenceScore: 92 })
     notifyApproachingUsers(req.branchLocationIds).catch((cause) => console.error('Queue approaching email failed:', cause.message))
-    res.json({ success: true, message: `${token.code} is now being served.`, data: { token } })
+    res.json({ success: true, message: `${getTokenDisplay(token)} is now being served.`, data: { token: publicToken(token.toObject?.() || token) } })
   } catch (error) { next(error) }
 }
 
@@ -156,7 +160,7 @@ async function notifyApproachingUsers(branchLocationIds) {
   await Promise.allSettled(approachingTokens.map((token, index) => token.user?.email ? enqueueQueueApproachingEmail({
     email: token.user.email,
     name: token.user.name,
-    queueNumber: token.code,
+    queueNumber: getTokenDisplay(token),
     serviceName: token.service,
     peopleAhead: index,
   }) : Promise.resolve()))
@@ -169,15 +173,16 @@ export async function createWalkIn(req, res, next) {
     const phone = String(req.body.phone || '0000000000').trim()
     const location = await Location.findOne({ _id: { $in: req.branchLocationIds }, service }).lean()
     if (!location || service.length < 2) return res.status(400).json({ success: false, error: { code: 'INVALID_WALK_IN', message: 'Select a valid service for this branch.' } })
-    const code = `VIP-${Date.now().toString(36).toUpperCase()}-${crypto.randomInt(100, 1000)}`
+    const tokenNumber = await generateDailyTokenNumber({ locationId: location._id, serviceId: service })
+    const code = `${tokenNumber.date}-${String(location._id)}-${Buffer.from(service).toString('base64url').slice(0, 16)}-${tokenNumber.dailySequenceNumber}`
     const estimatedMinutes = Math.max(1, location.predictedWaitMinutes || location.defaultServiceMinutes || 15)
     const predictedStartTime = new Date(Date.now() + estimatedMinutes * 60_000)
     const serviceDuration = Math.max(1, location.defaultServiceMinutes || 15)
     const { predictedCompletionTime } = calculateServiceWindow({ startAt: predictedStartTime, durationMinutes: serviceDuration })
-    const token = await Token.create({ code, user: null, createdByManager: req.user._id, location: location._id, service, category: location.category, phone, accessibility: true, priority: 'high', estimatedMinutes, predictedStartTime, predictedCompletionTime, serviceDuration })
+    const token = await Token.create({ code, displayTokenNumber: tokenNumber.displayTokenNumber, dailySequenceNumber: tokenNumber.dailySequenceNumber, date: tokenNumber.date, user: null, createdByManager: req.user._id, location: location._id, service, category: location.category, phone, accessibility: true, priority: 'high', estimatedMinutes, predictedStartTime, predictedCompletionTime, serviceDuration })
     await emitQueueUpdated(location._id)
     emitPredictionUpdated({ locationId: location._id, tokenId: token._id, newWaitTime: token.estimatedMinutes, confidenceScore: 88 })
-    res.status(201).json({ success: true, message: 'Priority walk-in token created.', data: { token } })
+    res.status(201).json({ success: true, message: 'Priority walk-in token created.', data: { token: publicToken(token.toObject()) } })
   } catch (error) { next(error) }
 }
 
@@ -203,13 +208,13 @@ export async function updateTokenStatus(req, res, next) {
     }
     if (status === 'cancelled') {
       emitTokenCancelled({ token: req.managerToken })
-      if (req.managerToken.user) notifyUser(req.managerToken.user, { title: 'Token cancelled', message: `Token ${req.managerToken.code} was cancelled by the manager.`, type: 'queue', data: { tokenId: req.managerToken._id } })
+      if (req.managerToken.user) notifyUser(req.managerToken.user, { title: 'Token cancelled', message: `${getTokenDisplay(req.managerToken)} was cancelled by the manager.`, type: 'queue', data: { tokenId: req.managerToken._id } })
       const populatedToken = await Token.findById(req.managerToken._id).populate('user', 'name email').lean()
       if (populatedToken?.user?.email) {
         enqueueTokenCancelledEmail({
           email: populatedToken.user.email,
           name: populatedToken.user.name,
-          queueNumber: populatedToken.code,
+          queueNumber: getTokenDisplay(populatedToken),
           serviceName: populatedToken.service,
           reason: populatedToken.cancelReason,
           cancelledBy: 'NexTurn manager',
@@ -219,7 +224,7 @@ export async function updateTokenStatus(req, res, next) {
     await emitQueueUpdated(req.managerToken.location)
     if (req.managerToken.user) await emitUserQueueUpdated(req.managerToken.location, req.managerToken.user)
     emitPredictionUpdated({ locationId: req.managerToken.location, tokenId: req.managerToken._id, oldWaitTime: req.managerToken.estimatedMinutes, newWaitTime: status === 'completed' ? 0 : null, confidenceScore: 90 })
-    res.json({ success: true, message: `${req.managerToken.code} marked ${status}.`, data: { token: req.managerToken } })
+    res.json({ success: true, message: `${getTokenDisplay(req.managerToken)} marked ${status}.`, data: { token: publicToken(req.managerToken.toObject?.() || req.managerToken) } })
   } catch (error) { next(error) }
 }
 
@@ -285,7 +290,7 @@ export async function getManagerNotifications(req, res, next) {
     ])
     const alerts = []
     if (waiting > 20) alerts.push({ id: 'surge', severity: 'critical', title: 'Surge Alert', message: `${waiting} customers are waiting. Consider activating more counters.` })
-    staleTokens.forEach((token) => alerts.push({ id: `stale-${token._id}`, severity: 'warning', title: 'Stale Token Warning', message: `${token.code} has exceeded twice the ${baseline}-minute service baseline.` }))
+    staleTokens.forEach((token) => alerts.push({ id: `stale-${token._id}`, severity: 'warning', title: 'Stale Token Warning', message: `${getTokenDisplay(token)} has exceeded twice the ${baseline}-minute service baseline.` }))
     if (alerts.length && req.user?.email) {
       const primaryAlert = alerts[0]
       enqueueManagerAlertEmail({
@@ -298,4 +303,13 @@ export async function getManagerNotifications(req, res, next) {
     }
     res.json({ success: true, data: { waiting, baselineMinutes: baseline, alerts } })
   } catch (error) { next(error) }
+}
+
+function publicToken(token) {
+  const displayTokenNumber = getTokenDisplay(token)
+  return {
+    ...token,
+    code: displayTokenNumber,
+    displayTokenNumber,
+  }
 }

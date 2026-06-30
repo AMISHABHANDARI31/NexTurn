@@ -1,10 +1,10 @@
-import crypto from 'node:crypto'
 import Location from '../models/locationModel.js'
 import Token from '../models/tokenModel.js'
 import Counter from '../models/counterModel.js'
 import { enqueueBookingConfirmationEmail, enqueueTokenCancelledEmail } from '../services/emailQueue.js'
 import { emitPredictionUpdated, emitQueueUpdated, emitTokenCancelled, emitUserQueueUpdated } from '../services/queueService.js'
 import { getNotificationHistory, notifyUser } from '../services/notificationService.js'
+import { generateDailyTokenNumber, getTokenDisplay } from '../services/tokenNumberService.js'
 import { calculateServiceWindow } from '../modules/queue/predictionService.js'
 import { predictQueue } from '../../ai/prediction/predictionService.js'
 
@@ -80,7 +80,7 @@ export function getQueue(_req, res) {
 export async function getTokens(req, res, next) {
   try {
     const tokens = await Token.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(20).lean()
-    res.json({ success: true, data: tokens.map((token) => ({ id: token._id, code: token.code, customer: req.user.name, service: token.service, waitMinutes: token.estimatedMinutes, priority: token.accessibility ? 'priority' : 'standard', status: token.status === 'completed' ? 'done' : token.status === 'serving' ? 'serving' : token.status === 'cancelled' ? 'cancelled' : 'waiting', cancelReason: token.cancelReason, cancelledAt: token.cancelledAt })) })
+    res.json({ success: true, data: tokens.map((token) => ({ id: token._id, code: getTokenDisplay(token), displayTokenNumber: getTokenDisplay(token), dailySequenceNumber: token.dailySequenceNumber, date: token.date, customer: req.user.name, service: token.service, waitMinutes: token.estimatedMinutes, priority: token.accessibility ? 'priority' : 'standard', status: token.status === 'completed' ? 'done' : token.status === 'serving' ? 'serving' : token.status === 'cancelled' ? 'cancelled' : 'waiting', cancelReason: token.cancelReason, cancelledAt: token.cancelledAt })) })
   } catch (error) { next(error) }
 }
 
@@ -103,11 +103,11 @@ export async function cancelOwnToken(req, res, next) {
     await emitQueueUpdated(token.location)
     await emitUserQueueUpdated(token.location, req.user._id)
     emitPredictionUpdated({ locationId: token.location, tokenId: token._id, oldWaitTime: token.estimatedMinutes, newWaitTime: null, confidenceScore: 90 })
-    notifyUser(req.user._id, { title: 'Token cancelled', message: `Your token ${token.code} has been cancelled successfully.`, type: 'queue', data: { tokenId: token._id } })
+    notifyUser(req.user._id, { title: 'Token cancelled', message: `Your token ${getTokenDisplay(token)} has been cancelled successfully.`, type: 'queue', data: { tokenId: token._id } })
     enqueueTokenCancelledEmail({
       email: req.user.email,
       name: req.user.name,
-      queueNumber: token.code,
+      queueNumber: getTokenDisplay(token),
       serviceName: token.service,
       reason,
       cancelledBy: 'You',
@@ -135,23 +135,24 @@ export async function issueToken(req, res, next) {
 
     const aiPrediction = await predictQueue({ locationId: location._id, userId: req.user._id })
     const estimatedMinutes = Math.max(1, Math.round(aiPrediction?.predictedWaitTime || (accessibility ? 15 : location.predictedWaitMinutes || 18)))
-    const code = `NT-${Date.now().toString(36).toUpperCase()}-${crypto.randomInt(100, 1000)}`
+    const tokenNumber = await generateDailyTokenNumber({ locationId: location._id, serviceId: service })
+    const code = `${tokenNumber.date}-${String(location._id)}-${Buffer.from(service).toString('base64url').slice(0, 16)}-${tokenNumber.dailySequenceNumber}`
     const predictedStartTime = new Date(Date.now() + estimatedMinutes * 60_000)
     const serviceDuration = Math.max(1, location.defaultServiceMinutes || 15)
     const { predictedCompletionTime } = calculateServiceWindow({ startAt: predictedStartTime, durationMinutes: serviceDuration })
-    const token = await Token.create({ code, user: req.user._id, location: location._id, service, category: location.category, phone, accessibility, priority: accessibility ? 'high' : 'standard', estimatedMinutes, predictedStartTime, predictedCompletionTime, serviceDuration })
+    const token = await Token.create({ code, displayTokenNumber: tokenNumber.displayTokenNumber, dailySequenceNumber: tokenNumber.dailySequenceNumber, date: tokenNumber.date, user: req.user._id, location: location._id, service, category: location.category, phone, accessibility, priority: accessibility ? 'high' : 'standard', estimatedMinutes, predictedStartTime, predictedCompletionTime, serviceDuration })
     await emitQueueUpdated(location._id)
     await emitUserQueueUpdated(location._id, req.user._id)
     emitPredictionUpdated({ locationId: location._id, tokenId: token._id, newWaitTime: estimatedMinutes, confidenceScore: 90 })
     enqueueBookingConfirmationEmail({
       email: req.user.email,
       name: req.user.name,
-      queueNumber: code,
+      queueNumber: tokenNumber.displayTokenNumber,
       serviceName: service,
       estimatedWaitingTime: estimatedMinutes,
       bookingDateTime: new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }).format(token.createdAt),
     }).catch((cause) => console.error('Booking confirmation email queue failed:', cause.message))
-    return res.status(201).json({ success: true, message: 'Token issued successfully.', data: { tokenId: String(token._id), code, estimatedMinutes, locationId: String(location._id) } })
+    return res.status(201).json({ success: true, message: 'Token issued successfully.', data: { tokenId: String(token._id), code: tokenNumber.displayTokenNumber, tokenNumber: tokenNumber.displayTokenNumber, displayTokenNumber: tokenNumber.displayTokenNumber, dailySequenceNumber: tokenNumber.dailySequenceNumber, date: tokenNumber.date, position: (aiPrediction?.peopleAhead ?? 0) + 1, estimatedWaitTime: `${estimatedMinutes} minutes`, estimatedMinutes, locationId: String(location._id) } })
   } catch (error) { next(error) }
 }
 

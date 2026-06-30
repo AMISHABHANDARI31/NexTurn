@@ -11,6 +11,7 @@ import {
 import { notifyUser } from './notificationService.js'
 import { calculateServiceWindow, confidenceIsSafe, estimateServiceDurationMinutes } from './predictionService.js'
 import { buildHistoryFromCompletedToken } from '../../../ai/training/datasetBuilder.js'
+import { getTokenDisplay } from '../../services/tokenNumberService.js'
 
 export async function getBranchAutomationState(branchId) {
   const branch = await Location.findById(branchId).lean()
@@ -116,11 +117,11 @@ export async function tryAdvanceBranch(branchId) {
     await emitUserQueueUpdated(nextToken.location, nextToken.user)
     notifyUser(nextToken.user, {
       title: 'Your turn has started',
-      message: `Your token ${nextToken.code} is now serving. Please visit ${activeCounter.name}.`,
+      message: `${getTokenDisplay(nextToken)} is now serving. Please visit ${activeCounter.name}.`,
       type: 'queue',
       data: { tokenId: nextToken._id, counterId: activeCounter._id },
     })
   }
 
-  return { advanced: true, previousToken: servingToken.code, currentToken: nextToken.code, counterId: String(activeCounter._id) }
+  return { advanced: true, previousToken: getTokenDisplay(servingToken), currentToken: getTokenDisplay(nextToken), counterId: String(activeCounter._id) }
 }

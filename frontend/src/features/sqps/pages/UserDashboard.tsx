@@ -33,6 +33,9 @@ import type { TokenRequestValues } from "../schemas/queueSchemas";
 interface ActiveToken {
   tokenId?: string;
   code: string;
+  displayTokenNumber?: string;
+  dailySequenceNumber?: number;
+  date?: string;
   locationId: string;
   location: string;
   service: string;
@@ -311,13 +314,16 @@ function TokenIssuance({
       onIssued({
         tokenId: result.tokenId,
         code: result.code,
+        displayTokenNumber: result.displayTokenNumber,
+        dailySequenceNumber: result.dailySequenceNumber,
+        date: result.date,
         locationId: result.locationId,
         location: selectedLocation,
         service: values.service,
         estimatedMinutes: result.estimatedMinutes,
         confidenceLow: Math.max(1, result.estimatedMinutes - 4),
         confidenceHigh: result.estimatedMinutes + 5,
-        peopleAhead: 4,
+        peopleAhead: Math.max(0, result.position - 1),
         issuedAt: new Date().toISOString(),
       }),
   });

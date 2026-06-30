@@ -119,7 +119,11 @@ export function LoginPage() {
     setFormError('')
     setFormSuccess('')
     setResending(true)
-    try { await resendEmailOtp(verificationEmail) }
+    try {
+      await resendEmailOtp(verificationEmail)
+      otpForm.reset({ otp: '' })
+      setFormSuccess('A new verification code was sent. Use the latest code only.')
+    }
     catch (error) { setFormError(errorMessage(error, 'Unable to resend the code.')) }
     finally { setResending(false) }
   }
@@ -179,7 +183,8 @@ export function LoginPage() {
         <form onSubmit={otpForm.handleSubmit(submitOtp)} className="space-y-5">
           <div className="flex items-center gap-2"><MailCheck className="text-ocean" /><h2 className="text-xl font-bold">Verify your email</h2></div>
           <p className="text-sm text-slate-600">We sent a 6-digit code to <strong>{verificationEmail}</strong>.</p>
-          <Input label="Verification code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" error={otpForm.formState.errors.otp?.message} {...otpForm.register('otp')} />
+          <Input label="Verification code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="Enter latest code" error={otpForm.formState.errors.otp?.message} {...otpForm.register('otp')} />
+          {formSuccess && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{formSuccess}</p>}
           {formError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{formError}</p>}
           <Button className="w-full" disabled={otpForm.formState.isSubmitting}>{otpForm.formState.isSubmitting ? 'Verifying...' : 'Verify and continue'}</Button>
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><button type="button" onClick={resend} disabled={resending} className="inline-flex items-center gap-1 font-bold text-ocean disabled:opacity-50"><RefreshCw size={14} />{resending ? 'Sending...' : 'Resend code'}</button><button type="button" onClick={() => { setVerificationEmail(''); setFormError('') }} className="font-semibold text-slate-500">Change email</button></div>
