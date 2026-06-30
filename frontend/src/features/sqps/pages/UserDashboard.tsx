@@ -10,7 +10,6 @@ import {
   MapPin,
   RefreshCw,
   Search,
-  ShieldCheck,
   Ticket,
   Trash2,
 } from "lucide-react";
@@ -421,9 +420,9 @@ function LiveToken({
           detail="Actual live queue position"
         />
         <MetricCard
-          label="Prediction confidence"
-          value={prediction ? `${prediction.predictionConfidenceScore}%` : "--"}
-          detail={prediction?.predictionConfidenceText ?? "Awaiting live AI telemetry"}
+          label="Current serving"
+          value={realtimeQueue?.currentToken?.code ?? "Waiting to start"}
+          detail={realtimeQueue?.currentToken ? "Live counter activity" : "You are first when a counter calls next"}
         />
       </section>
       <section className="card mt-6 p-6">
@@ -455,7 +454,7 @@ function LiveToken({
           {[
             [Activity, "Queue velocity", "Steady"],
             [Clock3, "Average service", prediction ? `${prediction.averageServiceDurationMinutes} min` : "--"],
-            [ShieldCheck, "Confidence", prediction ? `${prediction.predictionConfidenceScore}%` : "--"],
+            [Ticket, "Your token", token.code],
           ].map(([Icon, label, value]) => (
             <div key={label as string} className="rounded-xl bg-slate-50 p-4">
               <Icon size={17} className="text-ocean" />
@@ -678,9 +677,9 @@ function DashboardOverview({
           detail={token ? `Live queue position${realtimeQueue?.currentToken ? ` · serving ${realtimeQueue.currentToken.code}` : ""}` : "Select a service to begin"}
         />
         <MetricCard
-          label="Prediction confidence"
-          value={token && prediction ? `${prediction.predictionConfidenceScore}%` : "--"}
-          detail={prediction?.predictionConfidenceText ?? "Explainable live estimate"}
+          label="Current serving"
+          value={token ? realtimeQueue?.currentToken?.code ?? "Waiting to start" : "--"}
+          detail={token ? realtimeQueue?.currentToken ? "Live counter activity" : "No token is being served yet" : "Select a service to begin"}
         />
       </section>
       {token ? (
